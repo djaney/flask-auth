@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 from flask_restplus import Resource
-from auth import app, api, UserService, JWTDecodeError, MongoStore,  \
+from auth import app, api, UserService, JWTDecodeError, MongoStore, MemoryStore,  \
     CredentialsModel, JWTValidationParser, JWTTokenModel, UserModel, MissingUserError
 import jwt
 import os
 
-ddbs = MongoStore()
-user_service = UserService(ddbs)
+if os.getenv('MONGO_URI') is not None:
+    store = MongoStore()
+else:
+    store = MemoryStore()
+user_service = UserService(store)
 
 user_ns = api.namespace('users', description='Users')
 jwt_ns = api.namespace('jwt', description='JWT')
@@ -57,7 +60,7 @@ class JWTValidate(Resource):
     def get(self):
         args = JWTValidationParser.parse_args()
         try:
-            decoded = jwt.decode(args.get('token'), JWT_SECRET)
+            decoded = jwt.decode(args.get('token'), JWT_SECRET, algorithms=['HS256'])
             user = user_service.get(decoded.get('id'))
             return user
         except jwt.exceptions.ExpiredSignatureError:

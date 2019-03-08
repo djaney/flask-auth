@@ -5,6 +5,11 @@ import os
 import pymongo
 from pymongo import errors
 from bson import ObjectId
+import uuid
+
+MONGO_URI = os.getenv('MONGODB_URI')
+DATABASE = os.getenv('DATABASE')
+TABLE_USERS = os.getenv('TABLE_USERS')
 
 app = Flask(__name__)
 api = Api(app)
@@ -31,11 +36,47 @@ CredentialsModel = api.model('Credentials', {
 })
 
 
-class MongoStore:
+class BaseStore:
+    def create(self, data):
+        """
+        :param data:
+        :return: id
+        """
+        raise NotImplementedError
+
+    def find_one(self, params):
+        """
+        :param params:
+        :return: object
+        """
+        raise NotImplementedError
+
+
+class MemoryStore(BaseStore):
     def __init__(self):
-        self.client = pymongo.MongoClient(os.getenv('MONGODB_URI'))
-        self.db = self.client[os.getenv('DATABASE')]
-        self.table = self.db[os.getenv('TABLE_USERS')]
+        self.memory = []
+
+    def create(self, data):
+        data['id'] = str(uuid.uuid1())
+        self.memory.append(data)
+        return data['id']
+
+    def find_one(self, params):
+        for item in self.memory:
+            found = True
+            for k, v in params.items():
+                if item.get(k) is None or item.get(k) != v:
+                    found = False
+            if found:
+                return item
+        return None
+
+
+class MongoStore(BaseStore):
+    def __init__(self):
+        self.client = pymongo.MongoClient(MONGO_URI)
+        self.db = self.client[DATABASE]
+        self.table = self.db[TABLE_USERS]
 
         # Create index
         while True:
@@ -49,13 +90,16 @@ class MongoStore:
         if 'id' in data:
             del data['id']
         try:
-            return self.table.insert_one(data).inserted_id
+            return str(self.table.insert_one(data).inserted_id)
         except errors.DuplicateKeyError:
             raise DuplicateUserError
 
     def find_one(self, params):
+        if 'id' in params:
+            params['id'] = ObjectId(params['id'])
         data = self.table.find_one(params)
-        data['id'] = data['_id']
+        data['id'] = str(data['_id'])
+        del data['_id']
         return data
 
 
@@ -68,18 +112,14 @@ class UserService:
 
     def create(self, payload):
         _id = self.store.create(payload)
-        return self.store.find_one({'_id': _id})
+        return self.store.find_one({'id': _id})
 
     def get(self, user_id):
-        data = self.store.find_one({'_id': ObjectId(user_id)})
-        data['id'] = str(data['_id'])
-        del data['_id']
+        data = self.store.find_one({'id': user_id})
         return data
 
     def get_by_username(self, username):
         data = self.store.find_one({'username': username})
-        data['id'] = str(data['_id'])
-        del data['_id']
         return data
 
 
